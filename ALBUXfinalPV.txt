@@ -1,4 +1,25 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
+
+-- Garantir que funções do executor estão disponíveis via loadstring/HttpGet
+local _genv = (getgenv and getgenv()) or _G
+local function _syncExec(name)
+    if _genv[name] and not rawget(_G, name) then
+        rawset(_G, name, _genv[name])
+    end
+end
+_syncExec("getconnections")
+_syncExec("fireproximityprompt")
+_syncExec("firesignal")
+_syncExec("setfpscap")
+_syncExec("writefile")
+_syncExec("readfile")
+_syncExec("isfile")
+_syncExec("rconsoleprint")
+_syncExec("rconsoleclear")
+_syncExec("setfflag")
+_syncExec("sethiddenproperty")
+_syncExec("cloneref")
+
 pcall(function() game:GetService("Players").RespawnTime = 0 end)
 local privateBuild = false
 
