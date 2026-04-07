@@ -1,4 +1,4 @@
-repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.ReplicatedStorage.Packages.Synchronizer
+if not game:IsLoaded() then game.Loaded:Wait() end
 pcall(function() game:GetService("Players").RespawnTime = 0 end)
 local privateBuild = false
 
@@ -484,7 +484,7 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function() while true do SharedState.AllAnimalsCache=allAnimalsCache; task.wait(0.01) end end)
+task.spawn(function() while true do SharedState.AllAnimalsCache=allAnimalsCache; task.wait(0.05) end end)
 function Utility:LarpNet(F) return Decrypted[F] end
 local Camera = Workspace.CurrentCamera
 local Mouse = LocalPlayer:GetMouse()
@@ -494,7 +494,6 @@ local function isMobile()
 end
 
 local IS_MOBILE = isMobile()
-
 
 local ConfigFileName = "AlbuxHub_Config.json"
 local PriorityFileName = "AlbuxHub_Priority.json"
@@ -747,7 +746,6 @@ local function walkForward(seconds)
         hum:Move(lookVector, false) 
     end) 
 end 
-
 
 local function instantClone() 
     if _G.isCloning then return end 
@@ -1017,7 +1015,6 @@ local Theme = {
         table.insert(_themeRegistry[colorType], element)
     end
 
-
     function applyTheme(themeName)
         local t = THEMES[themeName]
         if not t then return end
@@ -1140,7 +1137,6 @@ local Theme = {
             if _G.updateAutoBuyRingColor then _G.updateAutoBuyRingColor() end
             if _G.rebuildAutoBuyCirclePresets then _G.rebuildAutoBuyCirclePresets() end
 
-
             -- Atualiza racetrack borders com nova cor
             local guisRT = {"AutoStealUI","BullysAdminPanel","SettingsUI","StealSpeedUI","BullysInvisPanel","BullysSettings","BullysStatusHUD","BullysAutoBuyUI","BullysStealPanel","BullysAdminTools"}
             for _, gn in ipairs(guisRT) do
@@ -1168,13 +1164,10 @@ local Theme = {
         ShowNotification("TEMA", "Tema " .. themeName .. " aplicado!")
     end
 
-
 -- Aplicar tema salvo
 if Config.CurrentTheme and THEMES and THEMES[Config.CurrentTheme] then
     for k, v in pairs(THEMES[Config.CurrentTheme]) do Theme[k] = v end
 end
-
-
 
 local function attachPet3DPreview(parentBtn, petData, layoutOpts)
     layoutOpts = layoutOpts or {}
@@ -1838,7 +1831,6 @@ local function attachPet3DPreview(parentBtn, petData, layoutOpts)
 end
 
 _G.XiAttachPet3DPreview = attachPet3DPreview
-
 
 -- Expose globally
 _G.XiAttachPet3DPreview = attachPet3DPreview
@@ -2818,7 +2810,6 @@ local function stopAntiRagdoll()
     if Connections.antiRagdollConn then Connections.antiRagdollConn:Disconnect(); Connections.antiRagdollConn = nil end
     antiRagdollConn = Connections.antiRagdollConn
 end
-
 
 local function startAntiRagdoll(mode)
     stopAntiRagdoll()
@@ -6723,7 +6714,6 @@ if Config.TpSettings.TpOnLoad then
     task.spawn(function()
         local player = game.Players.LocalPlayer
 
-
         -- Aguarda o scanner estar 100% pronto (todos os plots lidos) — timeout reduzido
         local startScanner = tick()
         while not SharedState.ScannerReady and (tick() - startScanner) < 5 do
@@ -7691,7 +7681,6 @@ local sTabVisuals
 local sTabUI
 local sTabMovement
 
-
 do
     settingsGui = Instance.new("ScreenGui")
     settingsGui.Name = "SettingsUI"; settingsGui.ResetOnSpawn = false
@@ -8090,7 +8079,6 @@ do
         if not ns and _G.resetPlotBeam then pcall(_G.resetPlotBeam) end
         ShowNotification("LINE TO BASE", ns and "ENABLED" or "DISABLED")
     end)
-
 
     CreateSectionHeader("ESP", sTabVisuals)
 
@@ -8902,7 +8890,6 @@ if not IS_MOBILE then
         end
     end)
 end
-
 
 task.spawn(function()
     task.wait(1)
@@ -9910,7 +9897,6 @@ task.spawn(function()
         SaveConfig()
     end)
 
-
     local function updateVisualState(on)
         if btnInvis then
             btnInvis.Text = on and "ON" or "OFF"
@@ -10148,7 +10134,6 @@ task.spawn(function()
         end
     end
 end)
-
 
 task.spawn(function()
     local espGui = Instance.new("ScreenGui")
@@ -10860,7 +10845,6 @@ task.spawn(function()
     end
 end)
 
-
 task.spawn(function()
     local playerESPEnabled = Config.PlayerESP
     local playerBillboards = {}
@@ -11082,7 +11066,6 @@ task.spawn(function()
         local success, errorMessage = pcall(refreshSubspaceMineESP)
     end
 end)
-
 
 task.spawn(function()
     local Packages = ReplicatedStorage:WaitForChild("Packages")
@@ -11720,7 +11703,6 @@ if Config.CleanErrorGUIs then
     end)
 end
 
-
 task.spawn(function()
     local HTheme = {
         Background = Color3.fromRGB(15,17,22),
@@ -11921,7 +11903,6 @@ task.spawn(function()
         idBox.Text = ""
     end)
 end)
-
 
 task.spawn(function()
     repeat task.wait() until game:IsLoaded()
@@ -12272,7 +12253,6 @@ task.spawn(function()
     end)
 end)
 
-
 -- ==========================================
 -- STANDALONE AUTO BUY SCRIPT
 -- ==========================================
@@ -12347,7 +12327,6 @@ local function initAutoBuy()
         if existingRing then existingRing:Destroy() end
     end
     pcall(destroyLeftovers)
-
 
     -- BACKEND
     task.spawn(function()
@@ -12984,7 +12963,6 @@ local function initAutoBuy()
     end)
 end
 
-
 -- ══════════════════════════════════════════════════════════════
 -- AUTO PICKUP — coleta brainrot da PRÓPRIA BASE com bypass
 -- Hover: BodyPosition (igual auto buy)
@@ -13240,9 +13218,7 @@ task.spawn(function()
         ShowNotification("AUTO PICKUP", "✅ Coletado!")
         if Config.AutoPickupKick then
             ShowNotification("AUTO PICKUP", "Kickando...")
-            task.delay(0.1, function()
-                pcall(function() game:Shutdown() end)
-            end)
+            pcall(function() game:Shutdown() end)
         end
         task.delay(0.3, function()
             stopAll()
@@ -13278,7 +13254,7 @@ task.spawn(function()
     -- ── Loop principal ────────────────────────────────────────
     task.spawn(function()
         while true do
-            task.wait(0.15)
+            task.wait(0.2)
             if not active then destroyBodyPos(); continue end
 
             -- Escolher alvo
