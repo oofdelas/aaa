@@ -1,4 +1,3 @@
-repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer and game.ReplicatedStorage.Packages.Synchronizer
 pcall(function() game:GetService("Players").RespawnTime = 0 end)
 local privateBuild = false
 
