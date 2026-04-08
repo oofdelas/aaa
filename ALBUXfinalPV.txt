@@ -449,7 +449,7 @@ local function setupPlotListener(plot)
     if not ch then return end
     plot.DescendantAdded:Connect(function() scanSinglePlot(plot) end)
     plot.DescendantRemoving:Connect(function() scanSinglePlot(plot) end)
-    task.spawn(function() while plot.Parent do task.wait(8); scanSinglePlot(plot) end end)
+    task.spawn(function() while plot.Parent do task.wait(0.5); scanSinglePlot(plot) end end)
 end
 
 task.spawn(function()
