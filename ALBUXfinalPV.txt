@@ -449,7 +449,7 @@ local function setupPlotListener(plot)
     if not ch then return end
     plot.DescendantAdded:Connect(function() scanSinglePlot(plot) end)
     plot.DescendantRemoving:Connect(function() scanSinglePlot(plot) end)
-    task.spawn(function() while plot.Parent do task.wait(0.1); scanSinglePlot(plot) end end)
+    task.spawn(function() while plot.Parent do task.wait(8); scanSinglePlot(plot) end end)
 end
 
 task.spawn(function()
@@ -748,6 +748,89 @@ local function walkForward(seconds)
     end) 
 end 
 
+local function findNearestWallHit(maxDist)
+    local char = LocalPlayer.Character
+    local hrp = char and char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+
+    local origin = hrp.Position + Vector3.new(0, 2, 0)
+    local rayParams = RaycastParams.new()
+    rayParams.FilterType = Enum.RaycastFilterType.Exclude
+    rayParams.FilterDescendantsInstances = {char}
+
+    local dirs = {
+        Vector3.new(1, 0, 0), Vector3.new(-1, 0, 0),
+        Vector3.new(0, 0, 1), Vector3.new(0, 0, -1),
+        (Vector3.new(1, 0, 1)).Unit, (Vector3.new(1, 0, -1)).Unit,
+        (Vector3.new(-1, 0, 1)).Unit, (Vector3.new(-1, 0, -1)).Unit,
+    }
+
+    local best = nil
+    local bestDist = (maxDist or 60) + 1
+    for i = 1, #dirs do
+        local dir = dirs[i]
+        local result = Workspace:Raycast(origin, dir * (maxDist or 60), rayParams)
+        if result and result.Instance and result.Instance:IsA("BasePart") then
+            local d = (result.Position - origin).Magnitude
+            if d < bestDist then
+                bestDist = d
+                best = {result = result, dir = dir, origin = origin, hrp = hrp}
+            end
+        end
+    end
+    return best
+end
+
+local function computeWallSnapCFrame(hitData, extraGap)
+    if not hitData or not hitData.result or not hitData.hrp then return nil end
+    local hrp = hitData.hrp
+    local res = hitData.result
+    local normal = res.Normal
+    local nXZ = Vector3.new(normal.X, 0, normal.Z)
+    if nXZ.Magnitude < 0.001 then
+        nXZ = Vector3.new(hitData.dir.X, 0, hitData.dir.Z).Unit
+    else
+        nXZ = nXZ.Unit
+    end
+    local halfExtent = (math.abs(nXZ.X) * hrp.Size.X + math.abs(nXZ.Z) * hrp.Size.Z) * 0.5
+    local gap = extraGap or 0.05
+    local snapPos = Vector3.new(res.Position.X, hrp.Position.Y, res.Position.Z) + (nXZ * (halfExtent + gap))
+    local lookAt = snapPos - nXZ
+    return CFrame.lookAt(snapPos, lookAt)
+end
+
+local function debugWallScan()
+    local hitData = findNearestWallHit(80)
+    if not hitData then
+        pcall(function() ShowNotification("WALL SCAN", "No hit") end)
+        return
+    end
+    local res = hitData.result
+    local inst = res.Instance
+    pcall(function()
+        ShowNotification("WALL SCAN", tostring(inst.Name) .. "  d=" .. string.format("%.2f", (res.Position - hitData.origin).Magnitude))
+    end)
+    print("WALL_SCAN_HRP", hitData.hrp.Position)
+    print("WALL_SCAN_HIT", res.Position, "NORMAL", res.Normal, "DIST", (res.Position - hitData.origin).Magnitude)
+    if inst then
+        print("WALL_SCAN_PART", inst:GetFullName(), "SIZE", inst.Size, "CFRAME", inst.CFrame)
+    end
+    local snap = computeWallSnapCFrame(hitData, 0.05)
+    if snap then
+        print("WALL_SCAN_SNAP_CFRAME", snap)
+    end
+end
+
+_G.debugWallScan = debugWallScan
+_G.snapToWall = function(gap)
+    local hitData = findNearestWallHit(80)
+    local cf = computeWallSnapCFrame(hitData, gap or 0.05)
+    if cf and hitData and hitData.hrp and hitData.hrp.Parent then
+        hitData.hrp.CFrame = cf
+    end
+    return hitData and hitData.result
+end
+
 
 local function instantClone() 
     if _G.isCloning then return end 
@@ -768,10 +851,10 @@ local function instantClone()
             hum:EquipTool(cloner) 
         end) 
  
-        task.wait(0.05) 
+        task.wait(0.08) 
  
         cloner:Activate() 
-        task.wait(0.05) 
+        task.wait(0.08) 
  
         local cloneName = tostring(LocalPlayer.UserId) .. "_Clone" 
         for _ = 1, 100 do 
@@ -2232,6 +2315,7 @@ local function nukeVisualEffects()
 end
 
 local fpsBoostConn = nil
+local fpsBoostActive = false
 
 local function isPlayerCharacter(model)
     return Players:GetPlayerFromCharacter(model) ~= nil
@@ -2274,8 +2358,8 @@ local function setFPSBoost(enabled)
     SaveConfig()
 
     if enabled then
-        if getgenv().OPTIMIZER_ACTIVE then return end
-        getgenv().OPTIMIZER_ACTIVE = true
+        if fpsBoostActive then return end
+        fpsBoostActive = true
         storeOriginalSettings()
 
         pcall(function() if setfpscap then setfpscap(9999) end end)
@@ -2308,12 +2392,13 @@ local function setFPSBoost(enabled)
             fpsBoostConn = nil
         end
         fpsBoostConn = Workspace.DescendantAdded:Connect(function(obj)
-            if not getgenv().OPTIMIZER_ACTIVE then return end
-            pcall(function() stripVisuals(obj) end)
+            if Config.FPSBoost then
+                pcall(function() stripVisuals(obj) end)
+            end
         end)
     else
-        if not getgenv().OPTIMIZER_ACTIVE then return end
-        getgenv().OPTIMIZER_ACTIVE = false
+        if not fpsBoostActive then return end
+        fpsBoostActive = false
         if fpsBoostConn then
             pcall(function() fpsBoostConn:Disconnect() end)
             fpsBoostConn = nil
@@ -6437,9 +6522,16 @@ local function runAutoSnipe()
 
         -- Igual ao original: só clone se 2º andar OU base fechada no 1º; sem mexer em AutoRotate
         if isLegacySecondFloor or not _G._isTargetPlotUnlocked(targetPetData.plot) then
-            walkForward(0.25)
-            task.wait(0.25)
-            task.wait(0.10)
+            local wallOk = false
+            pcall(function()
+                if _G.snapToWall then
+                    wallOk = (_G.snapToWall(0.05) ~= nil)
+                end
+            end)
+            if not wallOk then
+                walkForward(0.25)
+            end
+            task.wait(0.15)
             instantClone()
             while _G.isCloning do task.wait() end
             task.wait(0.05)
@@ -6613,9 +6705,16 @@ local function runAutoSnipe()
     local savedAutoRotate = hum.AutoRotate
     -- Sempre usa walk + clone (removida a lógica que pulava clone com base aberta no 1º andar)
     pcall(function() hum.AutoRotate = false end)
-    walkForward(0.20)
-    task.wait(0.25)
-    task.wait(0.10) -- Confirma conclusão do walkForward antes do clone
+    local wallOk = false
+    pcall(function()
+        if _G.snapToWall then
+            wallOk = (_G.snapToWall(0.05) ~= nil)
+        end
+    end)
+    if not wallOk then
+        walkForward(0.20)
+    end
+    task.wait(0.15)
     instantClone()
     while _G.isCloning do task.wait() end
     task.wait(0.05) -- Delay para o clone ser concluído no servidor
@@ -6863,6 +6962,18 @@ local function runInsideBaseReturn()
     local char = LocalPlayer.Character
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
+
+    State._returnTp = State._returnTp or {inProgress=false, lastAt=0, lastPos=nil}
+    local rt = State._returnTp
+    local now = os.clock()
+    local targetPos = targetPart.Position
+    if rt.inProgress then return end
+    if rt.lastPos and (now - (rt.lastAt or 0)) < 1.25 and (rt.lastPos - targetPos).Magnitude < 2 then
+        return
+    end
+    rt.inProgress = true
+    rt.lastAt = now
+    rt.lastPos = targetPos
     
     task.spawn(function()
         local hum = char and char:FindFirstChildOfClass("Humanoid")
@@ -6874,14 +6985,19 @@ local function runInsideBaseReturn()
             end
         end
         task.wait(0.01)
-        for i = 1, 15 do
+        for i = 1, 4 do
             if LocalPlayer:GetAttribute("Stealing") then break end
             hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
-            if (hrp.Position - targetPart.Position).Magnitude > 3 then
-                hrp.CFrame = CFrame.new(targetPart.Position)
-            end
-            task.wait(0.05)
+            local dist = (hrp.Position - targetPart.Position).Magnitude
+            if dist <= 3 then break end
+            hrp.CFrame = CFrame.new(targetPart.Position)
+            task.wait(0.12)
         end
+        task.delay(0.4, function()
+            if State._returnTp == rt then
+                rt.inProgress = false
+            end
+        end)
     end)
 end
 
@@ -6937,6 +7053,10 @@ local function runHitReturnToBrainrot()
     local hrp = char and char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
 
+    State._returnTp = State._returnTp or {inProgress=false, lastAt=0, lastPos=nil}
+    local rt = State._returnTp
+    if rt.inProgress then return end
+
     task.spawn(function()
         task.wait(0.2)
         
@@ -6948,6 +7068,15 @@ local function runHitReturnToBrainrot()
 
         local targetPart = findAdorneeGlobal(targetAnimalData)
         if not targetPart or not targetPart.Parent then return end
+
+        local now = os.clock()
+        local targetPos = targetPart.Position
+        if rt.lastPos and (now - (rt.lastAt or 0)) < 1.25 and (rt.lastPos - targetPos).Magnitude < 2 then
+            return
+        end
+        rt.inProgress = true
+        rt.lastAt = now
+        rt.lastPos = targetPos
 
         local hum = char and char:FindFirstChildOfClass("Humanoid")
         if hum then
@@ -6973,6 +7102,11 @@ local function runHitReturnToBrainrot()
 
         hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
         hrp.CFrame = CFrame.new(targetPart.Position)
+        task.delay(0.6, function()
+            if State._returnTp == rt then
+                rt.inProgress = false
+            end
+        end)
     end)
 end
 
@@ -7062,6 +7196,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
     
     local tpKey = Enum.KeyCode[Config.TpSettings.TpKey] or Enum.KeyCode.T
     local cloneKey = Enum.KeyCode[Config.TpSettings.CloneKey] or Enum.KeyCode.V
+    local wallScanKey = Enum.KeyCode.B
 
     if input.KeyCode == tpKey then
         if _G.tpToBestBrainrot then
@@ -7073,6 +7208,16 @@ UserInputService.InputBegan:Connect(function(input, processed)
 
     if input.KeyCode == cloneKey then
         instantClone()
+    end
+
+    if input.KeyCode == wallScanKey then
+        pcall(function()
+            if _G.debugWallScan then
+                _G.debugWallScan()
+            else
+                debugWallScan()
+            end
+        end)
     end
     
     if input.KeyCode == (Enum.KeyCode[Config.TpSettings.CarpetSpeedKey] or Enum.KeyCode.Q) then
@@ -7244,6 +7389,12 @@ do
     -- ============================================================
     local function tpToBestBrainrot()
         if State.isTpMoving then return end
+        pcall(function()
+            local char = LocalPlayer.Character
+            if not char then return end
+            if not (char:FindFirstChild("Humanoid") and char:FindFirstChild("HumanoidRootPart")) then return end
+            walkForward(0.15)
+        end)
 
         -- Desativa Carpet Speed se estiver ativo
         if State.carpetSpeedEnabled then
