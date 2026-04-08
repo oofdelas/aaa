@@ -826,6 +826,7 @@ _G.snapToWall = function(gap)
     local hitData = findNearestWallHit(80)
     local cf = computeWallSnapCFrame(hitData, gap or 0.05)
     if cf and hitData and hitData.hrp and hitData.hrp.Parent then
+        _G._tpPlannedRot = cf - cf.Position
         hitData.hrp.CFrame = cf
     end
     return hitData and hitData.result
@@ -884,6 +885,17 @@ local function instantClone()
             task.wait() 
             vim:SendMouseButtonEvent(pos.X, pos.Y, 0, false, game, 1) 
         end 
+
+        task.defer(function()
+            task.wait(0.02)
+            local c2 = LocalPlayer.Character
+            local hrp2 = c2 and c2:FindFirstChild("HumanoidRootPart")
+            local rot = _G._tpPlannedRot
+            if hrp2 and rot then
+                hrp2.CFrame = CFrame.new(hrp2.Position) * rot
+                pcall(function() hrp2.AssemblyAngularVelocity = Vector3.zero end)
+            end
+        end)
     end) 
  
     _G.isCloning = false 
@@ -2704,7 +2716,8 @@ local function runHitReturnToBrainrot()
             for i = 1, 10 do
                 if LocalPlayer:GetAttribute("Stealing") then break end
                 hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
-                hrp.CFrame = CFrame.new(airPos)
+                local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+                hrp.CFrame = CFrame.new(airPos) * rot
                 task.wait(0.05)
             end
             
@@ -2719,7 +2732,8 @@ local function runHitReturnToBrainrot()
         else
             -- TP suave para 1º e 2º andar (curta distância)
             hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
-            hrp.CFrame = CFrame.new(targetPart.Position)
+            local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+            hrp.CFrame = CFrame.new(targetPart.Position) * rot
         end
     end)
 end
@@ -3958,7 +3972,8 @@ task.spawn(function()
                                         plat.Transparency = 0.3
                                         plat.Parent = Workspace
                                         hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
-                                        hrp.CFrame = CFrame.new(airPos)
+                                        local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+                                        hrp.CFrame = CFrame.new(airPos) * rot
                                         task.spawn(function()
                                             task.wait(4)
                                             if plat and plat.Parent then pcall(function() plat:Destroy() end) end
@@ -4004,7 +4019,8 @@ task.spawn(function()
                                 for _ = 1, 1 do
                                     if State.isTpMoving then break end
                                     hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
-                                    hrp.CFrame = CFrame.new(targetPos)
+                                    local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+                                    hrp.CFrame = CFrame.new(targetPos) * rot
                                     task.wait(0.05)
                                 end
                             end)
@@ -6417,6 +6433,10 @@ local function runAutoSnipe()
     local hum = char and char:FindFirstChild("Humanoid")
     
     if not hrp or not hum or hum.Health <= 0 then return end
+
+    local savedAutoRotate = hum.AutoRotate
+    pcall(function() hum.AutoRotate = false end)
+    _G._tpPlannedRot = nil
     
     State.isTpMoving = true
     isTpMoving = State.isTpMoving
@@ -6516,8 +6536,14 @@ local function runAutoSnipe()
             if d < minFaceDist then minFaceDist = d; bestFace = v end
         end
         task.wait(0.01)
-        hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bestFace.X, hrp.Position.Y, bestFace.Z))
-        rotBeforeEnteringBase = hrp.CFrame - hrp.Position
+        local plannedRot = _G._tpPlannedRot
+        if plannedRot then
+            hrp.CFrame = CFrame.new(hrp.Position) * plannedRot
+            rotBeforeEnteringBase = plannedRot
+        else
+            hrp.CFrame = CFrame.lookAt(hrp.Position, Vector3.new(bestFace.X, hrp.Position.Y, bestFace.Z))
+            rotBeforeEnteringBase = hrp.CFrame - hrp.Position
+        end
         pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end)
 
         -- Igual ao original: só clone se 2º andar OU base fechada no 1º; sem mexer em AutoRotate
@@ -6653,7 +6679,10 @@ local function runAutoSnipe()
 
     -- Rotação FINAL da beira calculada só com sideSpot — aplica desde já (dentro da base também).
     -- Se usar lookStraightInwardFrom(hrp.Position) no início, a posição interior calcula yaw errado e “troca o lado” ao chegar.
-    local approachRotAtSide = lookStraightInwardFrom(sideSpot) - sideSpot
+    local approachRotAtSide = _G._tpPlannedRot or (lookStraightInwardFrom(sideSpot) - sideSpot)
+    if not _G._tpPlannedRot then
+        _G._tpPlannedRot = approachRotAtSide
+    end
 
     hrp.CFrame = CFrame.new(hrp.Position) * approachRotAtSide
     task.wait(0.01)
@@ -6687,7 +6716,15 @@ local function runAutoSnipe()
     hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
     pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end)
 
-    rotBeforeEnteringBase = approachRotAtSide
+    pcall(function()
+        if not _G._tpPlannedRot then
+            _G._tpPlannedRot = approachRotAtSide
+        end
+        if _G.snapToWall then
+            _G.snapToWall(0.05)
+        end
+    end)
+    rotBeforeEnteringBase = _G._tpPlannedRot or approachRotAtSide
 
     -- 2o andar: corrige só o Y sem resetar rotação (antes: CFrame.new(x,y,z) apagava o lookAt a cada frame)
     if isSecondFloor then
@@ -6702,9 +6739,6 @@ local function runAutoSnipe()
             end
         end)
     end
-    local savedAutoRotate = hum.AutoRotate
-    -- Sempre usa walk + clone (removida a lógica que pulava clone com base aberta no 1º andar)
-    pcall(function() hum.AutoRotate = false end)
     local wallOk = false
     pcall(function()
         if _G.snapToWall then
@@ -6719,7 +6753,6 @@ local function runAutoSnipe()
     while _G.isCloning do task.wait() end
     task.wait(0.05) -- Delay para o clone ser concluído no servidor
     task.wait(0.15) -- Confirmação do clone antes de TP pro brainrot
-    pcall(function() hum.AutoRotate = savedAutoRotate end)
     if holdConn then holdConn:Disconnect(); holdConn = nil end
     task.wait(0.10)
     end
@@ -6746,7 +6779,8 @@ local function runAutoSnipe()
             for i = 1, 10 do
                 if not LocalPlayer:GetAttribute("Stealing") then
                     hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
-                    hrp.CFrame = CFrame.new(airPos)
+                    local rot = _G._tpPlannedRot or rotBeforeEnteringBase or (hrp.CFrame - hrp.Position)
+                    hrp.CFrame = CFrame.new(airPos) * rot
                     task.wait(0.05)
                 end
             end
@@ -6763,7 +6797,8 @@ local function runAutoSnipe()
                 if LocalPlayer:GetAttribute("Stealing") then break end
                 hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
                 if (hrp.Position - targetPart.Position).Magnitude > 3 then
-                    hrp.CFrame = CFrame.new(targetPart.Position)
+                    local rot = _G._tpPlannedRot or rotBeforeEnteringBase or (hrp.CFrame - hrp.Position)
+                    hrp.CFrame = CFrame.new(targetPart.Position) * rot
                     task.wait(0.05)
                 end
                 task.wait(0.05)
@@ -6814,6 +6849,7 @@ local function runAutoSnipe()
         end
     end
     
+    pcall(function() hum.AutoRotate = savedAutoRotate end)
     State.isTpMoving = false
     isTpMoving = State.isTpMoving
 end
@@ -6990,7 +7026,8 @@ local function runInsideBaseReturn()
             hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
             local dist = (hrp.Position - targetPart.Position).Magnitude
             if dist <= 3 then break end
-            hrp.CFrame = CFrame.new(targetPart.Position)
+            local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+            hrp.CFrame = CFrame.new(targetPart.Position) * rot
             task.wait(0.12)
         end
         task.delay(0.4, function()
@@ -7101,7 +7138,8 @@ local function runHitReturnToBrainrot()
         end
 
         hrp.AssemblyLinearVelocity = Vector3.new(hrp.AssemblyLinearVelocity.X, 0, hrp.AssemblyLinearVelocity.Z)
-        hrp.CFrame = CFrame.new(targetPart.Position)
+        local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+        hrp.CFrame = CFrame.new(targetPart.Position) * rot
         task.delay(0.6, function()
             if State._returnTp == rt then
                 rt.inProgress = false
@@ -7389,12 +7427,6 @@ do
     -- ============================================================
     local function tpToBestBrainrot()
         if State.isTpMoving then return end
-        pcall(function()
-            local char = LocalPlayer.Character
-            if not char then return end
-            if not (char:FindFirstChild("Humanoid") and char:FindFirstChild("HumanoidRootPart")) then return end
-            walkForward(0.15)
-        end)
 
         -- Desativa Carpet Speed se estiver ativo
         if State.carpetSpeedEnabled then
@@ -7526,7 +7558,8 @@ do
                 -- Impulso para cima primeiro, depois TP direto no pet
                 hrp.AssemblyLinearVelocity = Vector3.new(0, 280, 0)
                 RunService.Heartbeat:Wait()
-                hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 3, 0))
+                local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+                hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 3, 0)) * rot
             end)
 
             return
@@ -7568,7 +7601,8 @@ do
                 task.wait(0.03)
 
                 -- 3) Teleporta para a posição intermediária mantendo Z atual
-                hrp.CFrame = CFrame.new(Vector3.new(-413, 50, hrp.Position.Z))
+                local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
+                hrp.CFrame = CFrame.new(Vector3.new(-413, 50, hrp.Position.Z)) * rot
 
                 -- 4) Continua o impulso por mais alguns ms (para parecer natural)
                 local impulseEnd = tick() + 0.035
