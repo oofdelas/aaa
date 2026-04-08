@@ -315,7 +315,7 @@ end
 local function get_all_pets()
     local out = {}
     for _, a in ipairs(allAnimalsCache) do
-        if a.genValue >= 1 and not isMyBaseAnimal(a) then
+        if a.genValue >= 1 and not isMyBaseAnimal(a) and not isBlacklisted(a.owner) then
             table.insert(out, {petName=a.name, mpsText=a.genText, mpsValue=a.genValue,
                 owner=a.owner, plot=a.plot, slot=a.slot, uid=a.uid, mutation=a.mutation, animalData=a})
         end
@@ -522,6 +522,7 @@ local DefaultConfig = {
     TpSettings = {
         Tool           = "Flying Carpet",
         Speed          = 2, 
+        StartDelay     = 0.15,
         TpKey          = "Z",
         CloneKey       = "V",
         TpOnLoad       = false,
@@ -559,6 +560,9 @@ local DefaultConfig = {
     HideActionsPanel = false,
     CompactAutoSteal = true,
     AutoKickOnSteal = false,
+    AutoPunishStealers = false,
+    AutoPunishCommand = "ragdoll",
+    AutoPunishInterval = 0.25,
     InstantSteal = true,
     InvisStealAngle = 233,
     SinkSliderValue = 5,
@@ -609,6 +613,9 @@ local DefaultConfig = {
     AutoBuyRange = 20,
     ShowStealingHUD = true,
     ShowStealingPlotESP = true,
+    Blacklist = {},
+    BlacklistESP = true,
+    BlacklistMsg = "BLOCKED",
 }
 
 local Config = DefaultConfig
@@ -650,6 +657,7 @@ do
                 if decoded.Positions[k] == nil then decoded.Positions[k] = v end
             end
         end
+        if type(decoded.Blacklist) ~= "table" then decoded.Blacklist = {} end
         Config = decoded
     end)
 end
@@ -684,6 +692,51 @@ if writefile then
         SaveConfig()
     end
 end
+
+local BlacklistedPlayers = (type(Config.Blacklist) == "table" and Config.Blacklist) or {}
+Config.Blacklist = BlacklistedPlayers
+
+function isBlacklisted(username)
+    if not username then return false end
+    local lower = string.lower(tostring(username))
+    for _, v in ipairs(BlacklistedPlayers) do
+        if string.lower(tostring(v)) == lower then
+            return true
+        end
+    end
+    return false
+end
+
+function addToBlacklist(username)
+    if not username or username == "" then return false end
+    if isBlacklisted(username) then return false end
+    table.insert(BlacklistedPlayers, tostring(username))
+    Config.Blacklist = BlacklistedPlayers
+    SaveConfig()
+    return true
+end
+
+function removeFromBlacklist(username)
+    if not username or username == "" then return false end
+    local lower = string.lower(tostring(username))
+    for i, v in ipairs(BlacklistedPlayers) do
+        if string.lower(tostring(v)) == lower then
+            table.remove(BlacklistedPlayers, i)
+            Config.Blacklist = BlacklistedPlayers
+            SaveConfig()
+            if _G.removeBlacklistESP then
+                local p = Players:FindFirstChild(tostring(username))
+                if p then pcall(_G.removeBlacklistESP, p) end
+            end
+            return true
+        end
+    end
+    return false
+end
+
+_G.isBlacklisted = isBlacklisted
+_G.addToBlacklist = addToBlacklist
+_G.removeFromBlacklist = removeFromBlacklist
 
 local function isMobyUser(player)
     if not player or not player.Character then return false end
@@ -969,6 +1022,120 @@ local Theme = {
     Success         = Color3.fromRGB(160, 95, 255),
     Error           = Color3.fromRGB(255, 80, 160),
 }
+
+task.spawn(function()
+    local function makeBlacklistESP(player)
+        local char = player.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+
+        local old = char:FindFirstChild("BullysBlacklistESP")
+        if old then old:Destroy() end
+
+        local msg = Config.BlacklistMsg or "BLOCKED"
+
+        local bb = Instance.new("BillboardGui")
+        bb.Name = "BullysBlacklistESP"
+        bb.Size = UDim2.new(0, 120, 0, 22)
+        bb.StudsOffsetWorldSpace = Vector3.new(0, 5.5, 0)
+        bb.AlwaysOnTop = true
+        bb.LightInfluence = 0
+        bb.ResetOnSpawn = false
+        bb.Adornee = hrp
+        bb.Parent = hrp
+
+        local bg = Instance.new("Frame", bb)
+        bg.Size = UDim2.new(1, 0, 1, 0)
+        bg.BackgroundColor3 = Theme.Background or Color3.fromRGB(20, 15, 20)
+        bg.BackgroundTransparency = 0.15
+        bg.BorderSizePixel = 0
+        Instance.new("UICorner", bg).CornerRadius = UDim.new(1, 0)
+        local bgStroke = Instance.new("UIStroke", bg)
+        bgStroke.Color = Theme.Error or Color3.fromRGB(255, 60, 60)
+        bgStroke.Thickness = 1.5
+        bgStroke.Transparency = 0.1
+
+        local lbl = Instance.new("TextLabel", bg)
+        lbl.Name = "MsgLbl"
+        lbl.Size = UDim2.new(1, -8, 1, 0)
+        lbl.Position = UDim2.new(0, 4, 0, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = "[X] " .. tostring(msg)
+        lbl.Font = Enum.Font.GothamBlack
+        lbl.TextSize = 11
+        lbl.TextColor3 = Theme.Error or Color3.fromRGB(255, 80, 80)
+        lbl.TextStrokeTransparency = 0.5
+        lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+        lbl.TextXAlignment = Enum.TextXAlignment.Center
+        lbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+        char.AncestryChanged:Connect(function()
+            if not char.Parent then pcall(function() bb:Destroy() end) end
+        end)
+    end
+
+    local function removeBlacklistESP(player)
+        local char = player.Character
+        if char then
+            local bb = char:FindFirstChild("BullysBlacklistESP")
+            if bb then bb:Destroy() end
+        end
+    end
+
+    _G.removeBlacklistESP = removeBlacklistESP
+
+    Players.PlayerRemoving:Connect(function(p)
+        removeBlacklistESP(p)
+    end)
+
+    Players.PlayerAdded:Connect(function(p)
+        p.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if Config.BlacklistESP ~= false and isBlacklisted(p.Name) then
+                makeBlacklistESP(p)
+            end
+        end)
+    end)
+    for _, p in ipairs(Players:GetPlayers()) do
+        p.CharacterAdded:Connect(function()
+            task.wait(0.5)
+            if Config.BlacklistESP ~= false and isBlacklisted(p.Name) then
+                makeBlacklistESP(p)
+            end
+        end)
+    end
+
+    while true do
+        task.wait(0.5)
+        if Config.BlacklistESP == false then continue end
+        for _, p in ipairs(Players:GetPlayers()) do
+            if p == LocalPlayer then continue end
+            pcall(function()
+                if isBlacklisted(p.Name) then
+                    local char = p.Character
+                    if char then
+                        local bb = char:FindFirstChild("BullysBlacklistESP")
+                        if not bb then
+                            makeBlacklistESP(p)
+                        else
+                            local msg = tostring(Config.BlacklistMsg or "BLOCKED")
+                            local lbl = bb:FindFirstChild("MsgLbl", true)
+                            if lbl and lbl:IsA("TextLabel") then
+                                local t = "[X] " .. msg
+                                if lbl.Text ~= t then
+                                    lbl.Text = t
+                                end
+                            end
+                        end
+                    end
+                else
+                    removeBlacklistESP(p)
+                end
+            end)
+        end
+    end
+end)
 
     -- SISTEMA DE TEMAS - sem `local` no top-level para nao exceder 200 locals
     -- ============================================================
@@ -2375,7 +2542,6 @@ local function setFPSBoost(enabled)
         storeOriginalSettings()
 
         pcall(function() if setfpscap then setfpscap(9999) end end)
-
         pcall(function()
             Lighting.GlobalShadows = false
             Lighting.FogEnd = 1000000
@@ -2395,8 +2561,8 @@ local function setFPSBoost(enabled)
             end
         end
 
-        for _, v in pairs(game:GetDescendants()) do
-            pcall(function() stripVisuals(v) end)
+        for _, obj in pairs(Workspace:GetDescendants()) do
+            pcall(stripVisuals, obj)
         end
 
         if fpsBoostConn then
@@ -2405,7 +2571,7 @@ local function setFPSBoost(enabled)
         end
         fpsBoostConn = Workspace.DescendantAdded:Connect(function(obj)
             if Config.FPSBoost then
-                pcall(function() stripVisuals(obj) end)
+                pcall(stripVisuals, obj)
             end
         end)
     else
@@ -2623,18 +2789,25 @@ local function getReturnTargetAnimalData()
         for _, pName in ipairs(priority) do
             local searchName = pName:lower()
             for _, a in ipairs(cache) do
-                if a and a.name and a.name:lower() == searchName and a.owner ~= LocalPlayer.Name then
+                if a and a.name and a.name:lower() == searchName and a.owner ~= LocalPlayer.Name and not isBlacklisted(a.owner) then
                     return a
                 end
             end
         end
         for _, a in ipairs(cache) do
-            if a and a.owner ~= LocalPlayer.Name then
+            if a and a.owner ~= LocalPlayer.Name and not isBlacklisted(a.owner) then
                 return a
             end
         end
     end
     return SharedState.SelectedPetData and SharedState.SelectedPetData.animalData or nil
+end
+
+local function isReturnSuppressed()
+    if State.returnSuppressUntil and tick() < State.returnSuppressUntil then
+        return true
+    end
+    return false
 end
 
 local function isInsideAnyBase()
@@ -2652,6 +2825,7 @@ end
 
 local function runHitReturnToBrainrot()
     if not Config.ReturnToBrainrot then return end
+    if isReturnSuppressed() then return end
     if State.isTpMoving then return end
     
     local char = LocalPlayer.Character
@@ -2750,7 +2924,7 @@ task.spawn(function()
             -- Acabou de parar de roubar — aguarda um frame para a UI "You stole" aparecer
             task.spawn(function()
                 task.wait(0.3)
-                if not State.stealJustCompleted and Config.ReturnToBrainrot and isInsideAnyBase() then
+                    if not State.stealJustCompleted and Config.ReturnToBrainrot and isInsideAnyBase() and not isReturnSuppressed() then
                     pcall(runHitReturnToBrainrot)
                 end
             end)
@@ -5143,6 +5317,7 @@ task.spawn(function()
     local function teleportToPlayerBase(plr)
         if not plr or not plr.Parent then return end
         if State.isTpMoving then ShowNotification("TP", "Already teleporting!"); return end
+        if isBlacklisted(plr.Name) then ShowNotification("BLACKLIST", "[X] " .. plr.Name .. " is blacklisted"); return end
 
         local char = LocalPlayer.Character
         local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -5166,7 +5341,7 @@ task.spawn(function()
 
             State.isTpMoving = true
             isTpMoving = State.isTpMoving
-            task.wait(0.01)
+            task.wait(tonumber(Config.TpSettings.StartDelay) or 0.15)
 
             local carpetName = Config.TpSettings and Config.TpSettings.Tool
             if type(carpetName) == "string" and carpetName ~= "" then
@@ -5392,6 +5567,7 @@ task.spawn(function()
         end
 
         if not targetPlayer or targetPlayer == LocalPlayer then ShowNotification("SPAM OWNER", "Owner not found or is you"); return end
+        if isBlacklisted(targetPlayer.Name) then ShowNotification("BLACKLIST", "[X] " .. targetPlayer.Name .. " is blacklisted"); return end
 
         spamBtn.BackgroundColor3 = Theme.BorderStrong
         spamBtn.BackgroundTransparency = 0
@@ -5643,6 +5819,100 @@ isOnCooldown = function(cmd)
     return (tick() - activeCooldowns[cmd]) < (COOLDOWNS[cmd] or 0)
 end
 
+local function getHeldBrainrotName(plr)
+    local char = plr and plr.Character
+    if not char then return nil end
+    for _, tool in ipairs(char:GetChildren()) do
+        if tool:IsA("Tool") then
+            local n = tool.Name
+            local l = n:lower()
+            if l ~= "flying carpet" and l ~= "quantum cloner" and l ~= "bat" and l ~= "glove" then
+                return n
+            end
+        end
+    end
+    return nil
+end
+
+local function isPriorityBrainrot(name)
+    if type(name) ~= "string" or name == "" then return false end
+    local lower = name:lower()
+    for _, p in ipairs(PRIORITY_LIST or {}) do
+        if type(p) == "string" and p:lower() == lower then
+            return true
+        end
+    end
+    return false
+end
+
+local function pickPunishCommand()
+    local pref = tostring(Config.AutoPunishCommand or "ragdoll")
+    local opts
+    if pref == "balloon" then
+        opts = {"balloon", "ragdoll"}
+    elseif pref == "random" then
+        opts = (math.random(1, 2) == 1) and {"ragdoll", "balloon"} or {"balloon", "ragdoll"}
+    else
+        opts = {"ragdoll", "balloon"}
+    end
+    for _, cmd in ipairs(opts) do
+        if not isOnCooldown(cmd) then
+            return cmd
+        end
+    end
+    return nil
+end
+
+do
+    local punished = {}
+    task.spawn(function()
+        while true do
+            task.wait(tonumber(Config.AutoPunishInterval) or 0.25)
+            if Config.AutoPunishStealers ~= true then continue end
+            local adminFunc = _G.runAdminCommand
+            if not adminFunc then continue end
+
+            for _, plr in ipairs(Players:GetPlayers()) do
+                if plr ~= LocalPlayer and plr.Parent then
+                    if isBlacklisted(plr.Name) then
+                        punished[plr.UserId] = nil
+                        continue
+                    end
+
+                    local stealing = (plr:GetAttribute("Stealing") == true)
+                    if not stealing then
+                        punished[plr.UserId] = nil
+                        continue
+                    end
+
+                    local idx = plr:GetAttribute("StealingIndex")
+                    local brName = (type(idx) == "string" and idx ~= "" and idx) or getHeldBrainrotName(plr)
+                    if not isPriorityBrainrot(brName) then
+                        continue
+                    end
+
+                    local entry = punished[plr.UserId]
+                    if entry and entry.name == brName then
+                        continue
+                    end
+
+                    local cmd = pickPunishCommand()
+                    if cmd then
+                        local ok = adminFunc(plr, cmd)
+                        if ok then
+                            punished[plr.UserId] = {name = brName, t = tick()}
+                            activeCooldowns[cmd] = tick()
+                            if cmd == "balloon" then
+                                SharedState.BalloonedPlayers[plr.UserId] = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end)
+end
+
     local function setGlobalVisualCooldown(cmd)
         if SharedState.AdminButtonCache[cmd] then
             for _, b in ipairs(SharedState.AdminButtonCache[cmd]) do
@@ -5791,6 +6061,10 @@ end
             end
             
             if bestPlayer then
+                if isBlacklisted(bestPlayer.Name) then
+                    ShowNotification("BLACKLIST", "[X] " .. bestPlayer.Name .. " is blacklisted")
+                    return
+                end
                 local hasAnyAvailable = false
                 for _, cmd in ipairs(ALL_COMMANDS) do
                     if not isOnCooldown(cmd) then
@@ -5874,6 +6148,9 @@ end
                         if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
                             local dist = (p.Character.HumanoidRootPart.Position - myChar.HumanoidRootPart.Position).Magnitude
                             if dist <= Config.ProximityRange then
+                                if isBlacklisted(p.Name) then
+                                    continue
+                                end
                                 local hasAnyAvailable = false
                                 for _, cmd in ipairs(ALL_COMMANDS) do
                                     if not isOnCooldown(cmd) then
@@ -5944,6 +6221,13 @@ end
 
         local function updateStatus()
             if not plr or not plr.Parent or not Players:FindFirstChild(plr.Name) then return end
+            if isBlacklisted(plr.Name) then
+                rowStroke.Color = Theme.Error
+                rowStroke.Transparency = 0.2
+            else
+                rowStroke.Color = Theme.BorderSoft
+                rowStroke.Transparency = 0.5
+            end
             local stealing = plr:GetAttribute("Stealing")
             local brainrotName = plr:GetAttribute("StealingIndex")
             if stealing then
@@ -6007,6 +6291,10 @@ end
             b.MouseButton1Click:Connect(function()
                 local adminFunc = _G.runAdminCommand
                 if not adminFunc then return end
+                if isBlacklisted(plr.Name) then
+                    ShowNotification("BLACKLIST", "[X] " .. plr.Name .. " is blacklisted")
+                    return
+                end
                 
                 -- Se clicar no ícone, executa o comando imediatamente para aquele player
                 if not isOnCooldown(def.cmd) then
@@ -6145,6 +6433,10 @@ end
         row.MouseButton1Click:Connect(function()
             local adminFunc = _G.runAdminCommand
             if not adminFunc then return end
+            if isBlacklisted(plr.Name) then
+                ShowNotification("BLACKLIST", "[X] " .. plr.Name .. " is blacklisted")
+                return
+            end
             if SharedState.SelectedAdminCommand then
                 if not isOnCooldown(SharedState.SelectedAdminCommand) then
                     adminFunc(plr, SharedState.SelectedAdminCommand)
@@ -6400,7 +6692,7 @@ local function runAutoSnipe()
             for _, pName in ipairs(PRIORITY_LIST) do
                 local searchName = pName:lower()
                 for _, a in ipairs(cache) do
-                    if a and a.name and a.name:lower() == searchName and a.owner ~= LocalPlayer.Name then
+                    if a and a.name and a.name:lower() == searchName and a.owner ~= LocalPlayer.Name and not isBlacklisted(a.owner) then
                         bestEntry = a
                         break
                     end
@@ -6409,7 +6701,7 @@ local function runAutoSnipe()
             end
             if not bestEntry then
                 for _, a in ipairs(cache) do
-                    if a and a.owner ~= LocalPlayer.Name then
+                    if a and a.owner ~= LocalPlayer.Name and not isBlacklisted(a.owner) then
                         bestEntry = a
                         break
                     end
@@ -6455,6 +6747,7 @@ local function runAutoSnipe()
 
     if carpet then hum:EquipTool(carpet) end
     task.wait(0.01)
+    task.wait(tonumber(Config.TpSettings.StartDelay) or 0.15)
 
     local plotObj = Workspace:FindFirstChild("Plots") and Workspace.Plots:FindFirstChild(targetPetData.plot)
     local plotRootPart = plotObj and (plotObj:FindFirstChild("MainRootPart") or plotObj:FindFirstChildWhichIsA("BasePart"))
@@ -6491,6 +6784,9 @@ local function runAutoSnipe()
         local frontIdx = (myIdx <= 4) and (myIdx + 4) or (myIdx - 4)
         local targetIdx = getClosestBaseIdx(plotCenter)
         useLegacyTp = (targetIdx == frontIdx)
+    end
+    if not myPlotPos or myPlotName == targetPetData.plot then
+        useLegacyTp = false
     end
 
     local rotBeforeEnteringBase
@@ -6548,15 +6844,7 @@ local function runAutoSnipe()
 
         -- Igual ao original: só clone se 2º andar OU base fechada no 1º; sem mexer em AutoRotate
         if isLegacySecondFloor or not _G._isTargetPlotUnlocked(targetPetData.plot) then
-            local wallOk = false
-            pcall(function()
-                if _G.snapToWall then
-                    wallOk = (_G.snapToWall(0.05) ~= nil)
-                end
-            end)
-            if not wallOk then
-                walkForward(0.25)
-            end
+            walkForward(0.25)
             task.wait(0.15)
             instantClone()
             while _G.isCloning do task.wait() end
@@ -6908,6 +7196,7 @@ local _resetDebounce = false
 local function executeReset()
     if _resetDebounce then return end
     _resetDebounce = true
+    State.returnSuppressUntil = tick() + 5
 
     local char = LocalPlayer.Character
     if char then
@@ -6990,6 +7279,7 @@ end)
 
 local function runInsideBaseReturn()
     if not Config.ReturnToBrainrot or not SharedState.SelectedPetData then return end
+    if State.returnSuppressUntil and tick() < State.returnSuppressUntil then return end
     
     local targetPet = SharedState.SelectedPetData
     local targetPart = targetPet.animalData and findAdorneeGlobal(targetPet.animalData)
@@ -7084,6 +7374,7 @@ end
 
 local function runHitReturnToBrainrot()
     if not Config.ReturnToBrainrot then return end
+    if State.returnSuppressUntil and tick() < State.returnSuppressUntil then return end
     if State.isTpMoving then return end
     
     local char = LocalPlayer.Character
@@ -7453,7 +7744,7 @@ do
                         local searchName = pName:lower()
                         for _, a in ipairs(cache) do
                             if a and a.name and a.name:lower() == searchName
-                               and a.owner ~= LocalPlayer.Name then
+                               and a.owner ~= LocalPlayer.Name and not isBlacklisted(a.owner) then
                                 bestBasePet = a
                                 bestBaseGv  = tonumber(a.genValue) or 0
                                 break
@@ -7466,7 +7757,7 @@ do
                 -- Fallback: maior genValue (cache já está ordenado)
                 if not bestBasePet then
                     for _, a in ipairs(cache) do
-                        if a and a.owner ~= LocalPlayer.Name then
+                        if a and a.owner ~= LocalPlayer.Name and not isBlacklisted(a.owner) then
                             local gv = tonumber(a.genValue) or 0
                             if gv > bestBaseGv then
                                 bestBaseGv  = gv
@@ -7548,6 +7839,7 @@ do
                 local hrp  = char and char:FindFirstChild("HumanoidRootPart")
                 local hum  = char and char:FindFirstChild("Humanoid")
                 if not hrp or not hum or hum.Health <= 0 then return end
+                task.wait(tonumber(Config.TpSettings.StartDelay) or 0.15)
 
                 -- Equipa o carpet
                 local carpetName = Config.TpSettings and Config.TpSettings.Tool or "Flying Carpet"
@@ -7587,6 +7879,7 @@ do
                     runAutoSnipe()
                     return
                 end
+                task.wait(tonumber(Config.TpSettings.StartDelay) or 0.15)
 
                 -- Equipa o carpet antes do impulso
                 local carpetName = Config.TpSettings and Config.TpSettings.Tool or "Flying Carpet"
@@ -7875,6 +8168,7 @@ local sTabTP
 local sTabVisuals
 local sTabUI
 local sTabMovement
+local sTabBlacklist
 
 
 do
@@ -7915,7 +8209,8 @@ do
     sTitle.Font = Enum.Font.GothamBlack; sTitle.TextSize = 14
     sTitle.TextColor3 = Theme.TextPrimary; sTitle.TextXAlignment = Enum.TextXAlignment.Left
 
-    local TAB_H = 86
+    local tabNames = {"TP", "VISUALS", "UI", "MOVEMENT", "BLACKLIST"}
+    local TAB_H = 44 + ((math.ceil(#tabNames / 2) - 1) * 42)
     local tabBar = Instance.new("Frame", sFrame)
     tabBar.Size = UDim2.new(1, -(PAD*2), 0, TAB_H)
     tabBar.Position = UDim2.new(0, PAD, 0, HEADER_H + PAD)
@@ -7928,7 +8223,6 @@ do
     tbStroke.Thickness = 1
     tbStroke.Transparency = 0.55
 
-    local tabNames = {"TP", "VISUALS", "UI", "MOVEMENT"}
     local tabButtons = {}
     for i, name in ipairs(tabNames) do
         local btn = Instance.new("TextButton", tabBar)
@@ -7975,12 +8269,13 @@ do
     sTabVisuals  = makeTabList("tabVisuals")
     sTabUI       = makeTabList("tabUI")
     sTabMovement = makeTabList("tabMovement")
+    sTabBlacklist = makeTabList("tabBlacklist")
 
     -- sList aponta para TP (aba padrão) para compatibilidade com CreateRow
     sList = sTabTP
     sBindsList = sTabTP  -- binds vão nas abas corretas, mantido para compatibilidade
 
-    local allTabs = {sTabTP, sTabVisuals, sTabUI, sTabMovement}
+    local allTabs = {sTabTP, sTabVisuals, sTabUI, sTabMovement, sTabBlacklist}
 
     local function setTab(idx)
         for i, sf in ipairs(allTabs) do
@@ -8257,6 +8552,251 @@ do
     carpetStatusLbl.Font=Enum.Font.GothamBlack; carpetStatusLbl.TextSize=13
     carpetStatusLbl.TextXAlignment=Enum.TextXAlignment.Right
     _carpetStatusLabel = carpetStatusLbl
+end
+
+do
+    CreateSectionHeader("BLACKLIST", sTabBlacklist)
+
+    local rBlacklistESP = CreateRow("Blacklist ESP", sTabBlacklist)
+    CreateToggleSwitch(rBlacklistESP, Config.BlacklistESP ~= false, function(ns, set)
+        set(ns); Config.BlacklistESP = ns; SaveConfig()
+        ShowNotification("BLACKLIST ESP", ns and "ENABLED" or "DISABLED")
+    end)
+
+    local rBlacklistMsg = CreateRow("Blacklist Message", sTabBlacklist)
+    local msgBox = Instance.new("TextBox", rBlacklistMsg)
+    msgBox.Size = UDim2.new(0, 150, 0, 24)
+    msgBox.Position = UDim2.new(1, -160, 0.5, -12)
+    msgBox.BackgroundColor3 = Theme.SurfaceHighlight
+    msgBox.Text = tostring(Config.BlacklistMsg or "BLOCKED")
+    msgBox.Font = Enum.Font.Gotham
+    msgBox.TextSize = 11
+    msgBox.TextColor3 = Theme.TextPrimary
+    msgBox.ClearTextOnFocus = false
+    msgBox.PlaceholderText = "BLOCKED"
+    Instance.new("UICorner", msgBox).CornerRadius = UDim.new(0, 4)
+    msgBox.FocusLost:Connect(function()
+        Config.BlacklistMsg = tostring(msgBox.Text or "BLOCKED")
+        SaveConfig()
+        ShowNotification("BLACKLIST MSG", tostring(Config.BlacklistMsg))
+    end)
+
+    CreateSectionHeader("AUTO PANEL", sTabBlacklist)
+
+    local rAutoPunish = CreateRow("Auto Punish Stealers (Priority)", sTabBlacklist)
+    CreateToggleSwitch(rAutoPunish, Config.AutoPunishStealers == true, function(ns, set)
+        set(ns); Config.AutoPunishStealers = ns; SaveConfig()
+        ShowNotification("AUTO PANEL", ns and "ENABLED" or "DISABLED")
+    end)
+
+    local rAutoPunishCmd = CreateRow("Punish Command", sTabBlacklist)
+    local cmdCont = Instance.new("Frame", rAutoPunishCmd)
+    cmdCont.Size = UDim2.new(0, 180, 0, 24)
+    cmdCont.Position = UDim2.new(1, -190, 0.5, -12)
+    cmdCont.BackgroundTransparency = 1
+    local cmdBtns = {}
+    local cmdOptions = {{"ragdoll", "Ragdoll"}, {"balloon", "Balloon"}, {"random", "Random"}}
+    for i = 1, #cmdOptions do
+        local opt = cmdOptions[i]
+        local b = Instance.new("TextButton", cmdCont)
+        b.Size = UDim2.new(0.31, 0, 1, 0)
+        b.Position = UDim2.new((i - 1) * 0.345, 0, 0, 0)
+        local act = (tostring(Config.AutoPunishCommand or "ragdoll") == opt[1])
+        b.BackgroundColor3 = act and Theme.Accent1 or Theme.SurfaceHighlight
+        b.Text = opt[2]
+        b.TextColor3 = act and Color3.new(0, 0, 0) or Theme.TextPrimary
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 11
+        b.AutoButtonColor = false
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+        b.MouseButton1Click:Connect(function()
+            Config.AutoPunishCommand = opt[1]
+            SaveConfig()
+            for j = 1, #cmdBtns do
+                local isA = (j == i)
+                cmdBtns[j].BackgroundColor3 = isA and Theme.Accent1 or Theme.SurfaceHighlight
+                cmdBtns[j].TextColor3 = isA and Color3.new(0, 0, 0) or Theme.TextPrimary
+            end
+            ShowNotification("AUTO PANEL", "Command: " .. opt[2])
+        end)
+        cmdBtns[i] = b
+    end
+
+    local rAutoPunishInterval = CreateRow("Auto Punish Interval", sTabBlacklist)
+    local intervalBox = Instance.new("TextBox", rAutoPunishInterval)
+    intervalBox.Size = UDim2.new(0, 70, 0, 24)
+    intervalBox.Position = UDim2.new(1, -80, 0.5, -12)
+    intervalBox.BackgroundColor3 = Theme.SurfaceHighlight
+    intervalBox.Text = tostring(Config.AutoPunishInterval or 0.25)
+    intervalBox.Font = Enum.Font.Gotham
+    intervalBox.TextSize = 11
+    intervalBox.TextColor3 = Theme.TextPrimary
+    intervalBox.ClearTextOnFocus = false
+    intervalBox.PlaceholderText = "0.25"
+    Instance.new("UICorner", intervalBox).CornerRadius = UDim.new(0, 4)
+    intervalBox.FocusLost:Connect(function()
+        local n = tonumber((intervalBox.Text or ""):gsub(",", "."))
+        if not n or n <= 0 then
+            n = 0.25
+        end
+        n = math.clamp(n, 0.1, 2)
+        Config.AutoPunishInterval = n
+        intervalBox.Text = tostring(n)
+        SaveConfig()
+        ShowNotification("AUTO PANEL", "Interval: " .. tostring(n))
+    end)
+
+    local rBlacklistInput = CreateRow("Player Username", sTabBlacklist)
+    local rBlacklistLbl = rBlacklistInput:FindFirstChildOfClass("TextLabel")
+    if rBlacklistLbl then
+        rBlacklistLbl.Size = UDim2.new(0, 110, 1, -8)
+        rBlacklistLbl.TextWrapped = false
+        rBlacklistLbl.TextTruncate = Enum.TextTruncate.AtEnd
+    end
+    local inputBox = Instance.new("TextBox", rBlacklistInput)
+    inputBox.Size = UDim2.new(0, 120, 0, 24)
+    inputBox.Position = UDim2.new(1, -270, 0.5, -12)
+    inputBox.BackgroundColor3 = Theme.Surface
+    inputBox.BackgroundTransparency = 0.15
+    inputBox.Text = ""
+    inputBox.Font = Enum.Font.Gotham
+    inputBox.TextSize = 12
+    inputBox.TextColor3 = Theme.TextPrimary
+    inputBox.PlaceholderText = "username"
+    inputBox.ClearTextOnFocus = false
+    inputBox.TextXAlignment = Enum.TextXAlignment.Left
+    Instance.new("UICorner", inputBox).CornerRadius = UDim.new(0, 4)
+    local inputStroke = Instance.new("UIStroke", inputBox)
+    inputStroke.Color = Theme.BorderSoft
+    inputStroke.Transparency = 0.6
+
+    local removeBtn = Instance.new("TextButton", rBlacklistInput)
+    removeBtn.Size = UDim2.new(0, 60, 0, 24)
+    removeBtn.Position = UDim2.new(1, -140, 0.5, -12)
+    removeBtn.BackgroundColor3 = Theme.SurfaceHighlight
+    removeBtn.BackgroundTransparency = 0.15
+    removeBtn.BorderSizePixel = 0
+    removeBtn.Text = "Remove"
+    removeBtn.Font = Enum.Font.GothamBold
+    removeBtn.TextSize = 11
+    removeBtn.TextColor3 = Theme.TextPrimary
+    removeBtn.AutoButtonColor = false
+    Instance.new("UICorner", removeBtn).CornerRadius = UDim.new(0, 6)
+    local removeStroke = Instance.new("UIStroke", removeBtn)
+    removeStroke.Color = Theme.BorderSoft
+    removeStroke.Transparency = 0.55
+
+    local addBtn = Instance.new("TextButton", rBlacklistInput)
+    addBtn.Size = UDim2.new(0, 50, 0, 24)
+    addBtn.Position = UDim2.new(1, -74, 0.5, -12)
+    addBtn.BackgroundColor3 = Theme.Accent1
+    addBtn.BackgroundTransparency = 0.05
+    addBtn.BorderSizePixel = 0
+    addBtn.Text = "Add"
+    addBtn.Font = Enum.Font.GothamBlack
+    addBtn.TextSize = 12
+    addBtn.TextColor3 = Color3.new(0, 0, 0)
+    addBtn.AutoButtonColor = false
+    Instance.new("UICorner", addBtn).CornerRadius = UDim.new(0, 6)
+
+    local rBlacklistList = CreateRow("Blacklisted Players", 240, sTabBlacklist)
+    local listBg = Instance.new("Frame", rBlacklistList)
+    listBg.Size = UDim2.new(1, -20, 1, -34)
+    listBg.Position = UDim2.new(0, 10, 0, 28)
+    listBg.BackgroundColor3 = Theme.Surface
+    listBg.BackgroundTransparency = 0.25
+    listBg.BorderSizePixel = 0
+    Instance.new("UICorner", listBg).CornerRadius = UDim.new(0, 6)
+    local listStroke = Instance.new("UIStroke", listBg)
+    listStroke.Color = Theme.BorderSoft
+    listStroke.Transparency = 0.7
+
+    local listScroll = Instance.new("ScrollingFrame", listBg)
+    listScroll.Size = UDim2.new(1, -8, 1, -8)
+    listScroll.Position = UDim2.new(0, 4, 0, 4)
+    listScroll.BackgroundTransparency = 1
+    listScroll.BorderSizePixel = 0
+    listScroll.ScrollBarThickness = 3
+    listScroll.ScrollBarImageColor3 = Theme.Accent1
+    listScroll.ScrollingDirection = Enum.ScrollingDirection.Y
+    listScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    listScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    local listLayout = Instance.new("UIListLayout", listScroll)
+    listLayout.Padding = UDim.new(0, 6)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local function refreshBlacklistList()
+        for _, ch in ipairs(listScroll:GetChildren()) do
+            if ch:IsA("Frame") then ch:Destroy() end
+        end
+        local names = {}
+        for _, v in ipairs(BlacklistedPlayers) do
+            table.insert(names, tostring(v))
+        end
+        table.sort(names, function(a, b) return a:lower() < b:lower() end)
+        for idx, name in ipairs(names) do
+            local item = Instance.new("Frame", listScroll)
+            item.Size = UDim2.new(1, 0, 0, 28)
+            item.BackgroundColor3 = Theme.SurfaceHighlight
+            item.BackgroundTransparency = 0.25
+            item.BorderSizePixel = 0
+            Instance.new("UICorner", item).CornerRadius = UDim.new(0, 6)
+            local st = Instance.new("UIStroke", item)
+            st.Color = Theme.BorderSoft
+            st.Transparency = 0.75
+            st.Thickness = 1
+
+            local lbl = Instance.new("TextLabel", item)
+            lbl.Size = UDim2.new(1, -42, 1, 0)
+            lbl.Position = UDim2.new(0, 10, 0, 0)
+            lbl.BackgroundTransparency = 1
+            lbl.Text = name
+            lbl.Font = Enum.Font.GothamBold
+            lbl.TextSize = 12
+            lbl.TextColor3 = Theme.TextPrimary
+            lbl.TextXAlignment = Enum.TextXAlignment.Left
+            lbl.TextTruncate = Enum.TextTruncate.AtEnd
+
+            local xBtn = Instance.new("TextButton", item)
+            xBtn.Size = UDim2.new(0, 28, 0, 20)
+            xBtn.Position = UDim2.new(1, -34, 0.5, -10)
+            xBtn.BackgroundColor3 = Theme.Error
+            xBtn.BackgroundTransparency = 0.05
+            xBtn.BorderSizePixel = 0
+            xBtn.Text = "X"
+            xBtn.Font = Enum.Font.GothamBlack
+            xBtn.TextSize = 12
+            xBtn.TextColor3 = Color3.new(0, 0, 0)
+            xBtn.AutoButtonColor = false
+            Instance.new("UICorner", xBtn).CornerRadius = UDim.new(0, 6)
+            xBtn.MouseButton1Click:Connect(function()
+                if removeFromBlacklist(name) then
+                    ShowNotification("BLACKLIST", "UNBLOCKED: " .. name)
+                    refreshBlacklistList()
+                end
+            end)
+            item.LayoutOrder = idx
+        end
+    end
+
+    addBtn.MouseButton1Click:Connect(function()
+        local raw = tostring(inputBox.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if raw == "" then return end
+        if addToBlacklist(raw) then
+            ShowNotification("BLACKLIST", "BLOCKED: " .. raw)
+            refreshBlacklistList()
+        end
+    end)
+    removeBtn.MouseButton1Click:Connect(function()
+        local raw = tostring(inputBox.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if raw == "" then return end
+        if removeFromBlacklist(raw) then
+            ShowNotification("BLACKLIST", "UNBLOCKED: " .. raw)
+            refreshBlacklistList()
+        end
+    end)
+
+    refreshBlacklistList()
 end
 
 -- ============================================================
