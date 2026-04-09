@@ -15,189 +15,7 @@ local SharedState = {
     BalloonedPlayers = {},
     MobileScaleObjects = {},
     RefreshMobileScale = nil,
-    ConveyorAnimals = {}, -- Scan independente do conveyor para TP
 }
-
--- Scan independente do conveyor: roda sempre, não depende do AutoBuy
-task.spawn(function()
-    if not game:IsLoaded() then game.Loaded:Wait() end
-    task.wait(0.5) -- Aguarda o jogo carregar (reduzido para inicialização mais rápida)
-
-    local RARITY_WORDS_CONV = {common=true,uncommon=true,rare=true,epic=true,legendary=true,
-        secret=true,divine=true,rainbow=true,cursed=true,gold=true,diamond=true}
-
-    -- Palavras que nunca são nomes de brainrot no conveyor
-    local CONV_NAME_BLACKLIST = {
-        ["STOLEN"]=true,["STEAL"]=true,["ROUBAR"]=true,
-        ["PURCHASE"]=true,["COMPRAR"]=true,["BUY"]=true,
-        ["SECRET"]=true,["COLETAR"]=true,["COLLECT"]=true,
-        ["OFFLINE"]=true,["CASH"]=true,["VALUE"]=true,
-        ["BASE"]=true,["EMPTY"]=true,["VAZIO"]=true,
-        ["CLICK"]=true,["PRESS"]=true,["HOLD"]=true,["INTERACT"]=true,
-        ["COMMON"]=true,["UNCOMMON"]=true,["RARE"]=true,
-        ["EPIC"]=true,["LEGENDARY"]=true,["DIVINE"]=true,
-        ["RAINBOW"]=true,["CURSED"]=true,["GOLD"]=true,
-        ["DIAMOND"]=true,["CANDY"]=true,["BLOODROT"]=true,
-        ["RADIOACTIVE"]=true,["LAVA"]=true,["GENERATION"]=true,
-        ["YINYANG"]=true,["YIN YANG"]=true,["MUTATION"]=true,
-    }
-    local function convNameOk(text)
-        if not text or text == "" then return false end
-        local clean = text:gsub("<[^>]+>",""):match("^%s*(.-)%s*$") or ""
-        if #clean <= 1 then return false end
-        local u = clean:upper()
-        if u:find("^%$") or u:find("/S$") or u:find("^[%d%.]+") then return false end
-        if CONV_NAME_BLACKLIST[u] then return false end
-        if RARITY_WORDS_CONV[clean:lower()] then return false end
-        return true
-    end
-
-    local function parseGenConv(text)
-        if type(text) ~= "string" then return nil end
-        local txt = text:gsub("<[^>]+>", "")
-        local upper = txt:upper()
-        if not upper:find("%$") or not upper:find("/S") then return nil end
-        if upper:find("FUSING") or upper:find("CRAFTING") then return nil end
-        local clean = upper:gsub("%$", ""):gsub("/S", ""):gsub("%s+", "")
-        local number = tonumber(clean:match("[%d%.]+"))
-        if not number then return nil end
-        if clean:find("B") then return number * 1e9
-        elseif clean:find("M") then return number * 1e6
-        elseif clean:find("K") then return number * 1e3
-        else return number end
-    end
-
-    local function extractNameGenFromModel(model)
-        if not model then return nil, nil, 0 end
-        local bestName, bestGen, bestGV = nil, nil, 0
-        for _, bb in ipairs(model:GetDescendants()) do
-            if bb:IsA("BillboardGui") or bb:IsA("SurfaceGui") then
-                for _, d in ipairs(bb:GetDescendants()) do
-                    if d:IsA("TextLabel") and d.Text then
-                        local val = parseGenConv(d.Text)
-                        if val and val > bestGV then
-                            bestGV = val
-                            bestGen = d.Text:gsub("<[^>]+>", "")
-                            local container = d.Parent
-                            if container then
-                                -- Prioriza label chamado "DisplayName"
-                                local found = nil
-                                for _, sib in ipairs(container:GetChildren()) do
-                                    if sib:IsA("TextLabel") and sib.Name == "DisplayName" then
-                                        local clean = (sib.Text or ""):gsub("<[^>]+>",""):match("^%s*(.-)%s*$")
-                                        if convNameOk(clean) then found = clean; break end
-                                    end
-                                end
-                                -- Fallback: label mais longo que não seja blacklist
-                                if not found then
-                                    local bestTxt, bestLen = nil, 0
-                                    for _, sib in ipairs(container:GetChildren()) do
-                                        if sib:IsA("TextLabel") then
-                                            local clean = (sib.Text or ""):gsub("<[^>]+>",""):match("^%s*(.-)%s*$") or ""
-                                            if convNameOk(clean) and #clean > bestLen then
-                                                bestTxt = clean
-                                                bestLen = #clean
-                                            end
-                                        end
-                                    end
-                                    if bestTxt then found = bestTxt end
-                                end
-                                if found then bestName = found end
-                            end
-                        end
-                    end
-                end
-            end
-        end
-        return bestName, bestGen, bestGV
-    end
-
-    local function scanConveyorIndep()
-        local results = {}
-        local Workspace = game:GetService("Workspace")
-
-        -- Coleta todos os pets visíveis pelo UI primeiro
-        local visiblePets = {}
-        local debris = Workspace:FindFirstChild("Debris") or Workspace
-        for _, child in ipairs(debris:GetChildren()) do
-            if child:IsA("Model") or child:IsA("BasePart") then
-                local n, g, gv = extractNameGenFromModel(child)
-                if gv and gv > 0 then
-                    local part = child:IsA("BasePart") and child or (child:IsA("Model") and child.PrimaryPart)
-                    if not part then
-                        for _, c in ipairs(child:GetChildren()) do
-                            if c:IsA("BasePart") then part = c; break end
-                        end
-                    end
-                    if part then
-                        table.insert(visiblePets, {name=n, gen=g, gv=gv, part=part, model=child})
-                    end
-                end
-            end
-        end
-
-        -- Encontra ProximityPrompts de compra
-        for _, obj in ipairs(Workspace:GetDescendants()) do
-            if obj:IsA("ProximityPrompt") and obj.Enabled then
-                local txt = (obj.ActionText or ""):lower()
-                if txt:find("purchase") or txt:find("comprar") or txt:find("buy") then
-                    local promptPart = obj.Parent
-                    if not promptPart then continue end
-                    local realPart = promptPart:IsA("Attachment") and promptPart.Parent or promptPart
-                    if not (realPart and realPart:IsA("BasePart")) then continue end
-
-                    local finalName, finalGen, finalGv, finalModel = "Brainrot", "", 0, nil
-
-                    -- Tenta casar com um pet visível
-                    local minDist, matched = 15, nil
-                    for _, vPet in ipairs(visiblePets) do
-                        local d = (vPet.part.Position - realPart.Position).Magnitude
-                        if d < minDist then minDist = d; matched = vPet end
-                    end
-
-                    if matched then
-                        finalName = matched.name or "Brainrot"
-                        finalGen  = matched.gen or ""
-                        finalGv   = matched.gv or 0
-                        finalModel = matched.model
-                    else
-                        -- Fallback: busca no parente do prompt
-                        local searchRoot = realPart
-                        local cur = realPart
-                        while cur and cur.Parent and cur.Parent ~= Workspace do
-                            searchRoot = cur; cur = cur.Parent
-                        end
-                        local n, g, gv = extractNameGenFromModel(searchRoot)
-                        if n then finalName = n end
-                        if g then finalGen = g end
-                        if gv and gv > 0 then finalGv = gv end
-                        finalModel = searchRoot
-                    end
-
-                    table.insert(results, {
-                        name   = finalName,
-                        gen    = finalGen,
-                        gv     = finalGv,
-                        prompt = obj,
-                        part   = realPart,
-                        model  = finalModel,
-                        uid    = "conv_" .. tostring(obj),
-                    })
-                end
-            end
-        end
-        return results
-    end
-
-    -- Loop de scan contínuo
-    while true do
-        local ok, found = pcall(scanConveyorIndep)
-        if ok and found then
-            SharedState.ConveyorAnimals = found
-        end
-        task.wait(0.15) -- reduzido para detectar pets mais rápido
-    end
-end)
 
 do
 
@@ -4701,34 +4519,6 @@ task.spawn(function()
             end
         end
 
-        -- Verifica conveyor (esteira)
-        local conveyorList = SharedState.ConveyorAnimals
-        if conveyorList then
-            for _, entry in ipairs(conveyorList) do
-                local entryName = entry.name
-                if entryName and entry.prompt and entry.prompt.Parent and entry.prompt.Enabled then
-                    local entryLower = entryName:lower()
-                    for rank, pName in ipairs(PRIORITY_LIST) do
-                        if pName:lower() == entryLower then
-                            if rank < bestRank then
-                                bestRank = rank
-                                bestPriorityPet = {
-                                    name     = entry.name,
-                                    genText  = entry.gen or "",
-                                    genValue = entry.gv or 0,
-                                    uid      = "conveyor_" .. tostring(entry.prompt),
-                                    plot     = nil,
-                                    slot     = nil,
-                                    source   = "CONVEYOR",
-                                }
-                            end
-                            break
-                        end
-                    end
-                end
-            end
-        end
-
         return bestPriorityPet
     end
     
@@ -4989,16 +4779,6 @@ task.spawn(function()
         local remaining = math.max(0, priorityAlertUntil - tick())
         local secondsLeft = math.max(0, math.ceil(remaining))
         pTimer.Text = tostring(secondsLeft) .. "s"
-
-        -- Se o pet é do conveyor, mostra direto sem checar duel
-        if bestPriorityPet.source == "CONVEYOR" then
-            pLabel.TextColor3 = Color3.fromRGB(0, 255, 255)
-            pLabel.Text = "BEST PRIORITY: " .. tostring(priorityAlertName or bestPriorityPet.name or "NONE"):upper()
-            pStatus.Text = "CONVEYOR"
-            pStatus.TextColor3 = Color3.fromRGB(0, 255, 255)
-            priorityFrame.Visible = true
-            return
-        end
 
         local inDuel = false
         local Plots = Workspace:FindFirstChild("Plots")
@@ -7714,7 +7494,7 @@ do
     SharedState.UpdateRejoinButtonLabel = updateRejoinButtonLabel
 
     -- ============================================================
-    --  TP TO BEST BRAINROT  (Base + Conveyor)
+    --  TP TO BEST BRAINROT  (Base)
     -- ============================================================
     local function tpToBestBrainrot()
         if State.isTpMoving then return end
@@ -7727,9 +7507,6 @@ do
                 _carpetStatusLabel.TextColor3 = Theme.Error
             end
         end
-
-        -- Força scan rápido do conveyor antes de decidir
-        if _G.refreshConveyor then pcall(_G.refreshConveyor) end
 
         -- Melhor brainrot das BASES
         local bestBasePet = nil
@@ -7770,90 +7547,11 @@ do
             end
         end
 
-        -- Melhor brainrot do CONVEYOR
-        -- Usa SharedState.ConveyorAnimals que é atualizado pelo scan independente
-        local bestConvPet = nil
-        local bestConvGv  = -1
-
-        do
-            local convList = SharedState.ConveyorAnimals
-            if convList and type(convList) == "table" then
-                for _, entry in ipairs(convList) do
-                    local valid = entry.prompt and entry.prompt.Parent
-                                  and entry.prompt.Enabled
-                                  and entry.part  and entry.part.Parent
-                    local gv = tonumber(entry.gv) or 0
-                    if valid and gv > bestConvGv then
-                        bestConvGv  = gv
-                        bestConvPet = entry
-                    end
-                end
-            end
-        end
-
-        -- Exporta para o ESP (mantém compatibilidade)
+        -- Exporta para o ESP
         _G.BestBaseGv     = bestBaseGv
-        _G.BestConveyorGv = bestConvGv
 
-        -- Decide o alvo:
-        --   conveyor vence se gen for estritamente maior que a base
-        --   ou se não houver nenhum pet na base
-        local useConveyor = false
-        if bestConvPet and bestConvPet.part and bestConvPet.part.Parent then
-            if not bestBasePet then
-                useConveyor = true
-            elseif bestConvGv > bestBaseGv then
-                useConveyor = true
-            end
-        end
-
-        if not bestBasePet and not bestConvPet then
+        if not bestBasePet then
             ShowNotification("TP BEST", "Nenhum brainrot encontrado no servidor!")
-            return
-        end
-
-        -- ── TP PARA CONVEYOR ──────────────────────────────────────
-        if useConveyor then
-            local entry      = bestConvPet
-            local targetPart = entry.part
-
-            if not targetPart or not targetPart.Parent then
-                -- Conveyor pet sumiu, tenta base
-                if bestBasePet then
-                    useConveyor = false
-                else
-                    ShowNotification("TP BEST", "Pet do conveyor sumiu, tente novamente.")
-                    return
-                end
-            end
-        end
-
-        if useConveyor then
-            local entry      = bestConvPet
-            local targetPart = entry.part
-
-            ShowNotification("TP BEST", "CONVEYOR -> " .. tostring(entry.name or "?") .. "  " .. tostring(entry.gen or "$0/s"))
-
-            task.spawn(function()
-                local char = LocalPlayer.Character
-                local hrp  = char and char:FindFirstChild("HumanoidRootPart")
-                local hum  = char and char:FindFirstChild("Humanoid")
-                if not hrp or not hum or hum.Health <= 0 then return end
-                task.wait(tonumber(Config.TpSettings.StartDelay) or 0.15)
-
-                -- Equipa o carpet
-                local carpetName = Config.TpSettings and Config.TpSettings.Tool or "Flying Carpet"
-                local carpet = LocalPlayer.Backpack:FindFirstChild(carpetName)
-                            or char:FindFirstChild(carpetName)
-                if carpet then hum:EquipTool(carpet) end
-
-                -- Impulso para cima primeiro, depois TP direto no pet
-                hrp.AssemblyLinearVelocity = Vector3.new(0, 280, 0)
-                RunService.Heartbeat:Wait()
-                local rot = _G._tpPlannedRot or (hrp.CFrame - hrp.Position)
-                hrp.CFrame = CFrame.new(targetPart.Position + Vector3.new(0, 3, 0)) * rot
-            end)
-
             return
         end
 
@@ -8856,11 +8554,6 @@ do
         ShowNotification("BASE BRAINROT ESP", ns and "ENABLED" or "DISABLED")
     end)
 
-    CreateToggleSwitch(CreateRow("ESP Brainrot Carpet", sTabVisuals), Config.ConveyorESP, function(ns, set)
-        set(ns); Config.ConveyorESP = ns; SaveConfig()
-        ShowNotification("CARPET ESP", ns and "ENABLED" or "DISABLED")
-    end)
-
     local rSubspaceMineEsp = CreateRow("Subspace Mine ESP", sTabVisuals)
     CreateToggleSwitch(rSubspaceMineEsp, Config.SubspaceMineESP, function(ns, set)
         set(ns); Config.SubspaceMineESP = ns; SaveConfig()
@@ -9529,7 +9222,6 @@ do
     end)
 
     CreateSectionHeader("CLEAN UP", sTabUI)
-
     CreateToggleSwitch(CreateRow("Clean Error GUIs", sTabUI), Config.CleanErrorGUIs, function(ns, set)
         set(ns); Config.CleanErrorGUIs = ns; SaveConfig()
         ShowNotification("CLEAN ERROR GUIS", ns and "ENABLED" or "DISABLED")
@@ -9975,8 +9667,6 @@ task.spawn(function()
             return 
         end
         
-        local bestConvGv = _G.BestConveyorGv or -1
-        
         local seen = {}
         local bestBasePet = nil
         local bestBaseGv = -1
@@ -9991,10 +9681,9 @@ task.spawn(function()
             end
         end
 
-        _G.BestBaseGv = bestBaseGv -- Export for Conveyor to read
+        _G.BestBaseGv = bestBaseGv
 
-        -- Only draw Base ESP if it beats or matches conveyor
-        if bestBasePet and bestBaseGv >= bestConvGv then
+        if bestBasePet then
             local data = bestBasePet
             if true then
                 seen[data.uid] = true
@@ -12433,6 +12122,38 @@ SharedState.FPSFunctions.initPlayerTracking = function()
 end
 SharedState.FPSFunctions.initPlayerTracking()
 
+do
+    local function clearAlbuxErrors()
+        pcall(function()
+            local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+            local e = pg:FindFirstChild("ErrorOrbGui")
+            if e then e:Destroy() end
+            for _, g in ipairs(pg:GetChildren()) do
+                if g.Name == "LagbackNotification" then
+                    g:Destroy()
+                end
+            end
+        end)
+        pcall(function()
+            local cam = Workspace.CurrentCamera
+            if not cam then return end
+            for _, c in ipairs(cam:GetChildren()) do
+                if c.Name == "LagbackGhost" then
+                    c:Destroy()
+                end
+            end
+        end)
+    end
+
+    local function clearRobloxErrors()
+        local gs = cloneref and cloneref(game:GetService("GuiService")) or game:GetService("GuiService")
+        pcall(function() gs:ClearError() end)
+    end
+
+    _G.clearAlbuxErrors = clearAlbuxErrors
+    _G.clearRobloxErrors = clearRobloxErrors
+end
+
 if Config.CleanErrorGUIs then
     task.spawn(function()
         local GuiService = cloneref and cloneref(game:GetService("GuiService")) or game:GetService("GuiService")
@@ -12998,6 +12719,7 @@ task.spawn(function()
 end)
 
 
+if false then
 -- ==========================================
 -- STANDALONE AUTO BUY SCRIPT
 -- ==========================================
@@ -13710,6 +13432,7 @@ local function initAutoBuy()
 end
 
 
+end
 -- ══════════════════════════════════════════════════════════════
 -- AUTO PICKUP — coleta brainrot da PRÓPRIA BASE com bypass
 -- Hover: BodyPosition (igual auto buy)
@@ -14286,7 +14009,6 @@ task.spawn(function()
     end)
 end)
 -- INICIAR
-initAutoBuy()
 
 -- Salvar posições dos painéis ao fechar o jogo
 game:BindToClose(function()
