@@ -522,7 +522,7 @@ local DefaultConfig = {
     TpSettings = {
         Tool           = "Flying Carpet",
         Speed          = 2, 
-        StartDelay     = 0.15,
+        StartDelay     = 0.22,
         TpKey          = "Z",
         CloneKey       = "V",
         TpOnLoad       = false,
@@ -13965,9 +13965,7 @@ task.spawn(function()
         ShowNotification("AUTO PICKUP", "✅ Coletado!")
         if Config.AutoPickupKick then
             ShowNotification("AUTO PICKUP", "Kickando...")
-            task.delay(0.1, function()
-                pcall(function() game:Shutdown() end)
-            end)
+            pcall(function() game:Shutdown() end)
         end
         task.delay(0.3, function()
             stopAll()
